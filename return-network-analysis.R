@@ -71,14 +71,11 @@ coins_23
 coins = coins_40
 coins
 
-start_analysis_return = Sys.time()
-
 #set parameters
 window = 80
 coins_number = length(coins)
 type = sprintf("daily_return_%1$s_rw%2$s", coins_number, window)
 n.ahead = 10
-
 
 #make new data frame
 df = subset(data, select=c('timestamp',coins))
@@ -88,8 +85,6 @@ str(df)
 #convert to time series
 df_ts <- xts(df[,-1], order.by = as.POSIXct(df$timestamp, format = "%m/%d/%y %H:%M"))
 #"%m/%d/%y %H:%M"  "%Y-%m-%d %H:%M:%S"
-head(df_ts)
-str(df_ts)
 
 #delete duplicates
 df_ts <- make.index.unique(df_ts, drop = TRUE)
@@ -100,60 +95,39 @@ for (i in 1:length(names(df_ts))){
   df_ts[,names(df_ts)[i]]<-diff.xts(log(df_ts[,names(df_ts)[i]]))
 }
 
-#View(df_ts)
-tail(df_ts)
-str(df_ts)
 sum(is.na(df_ts))
 
 #remove NA
 df_ts <-  na.omit(df_ts) 
 str(df_ts) #also removed some periods
 
-dim(df_ts) 
-
-sum(is.na(df_ts))
-
-head(df_ts)
-periodicity(df_ts)
-
 data_for_analysis <- df_ts[-1,]
-
-head(data_for_analysis)
-tail(data_for_analysis)
-#View(data_for_analysis)
-#str(data_sep_march)
 sum(is.na(data_for_analysis))
-
-
-sum(is.nan(data_for_analysis))
 
 periodicity(data_for_analysis)
 
 # plot data
 plot.xts(data_for_analysis,legend.loc = "topright")
-plot.xts(data_for_analysis[,c(11:20)],legend.loc = "topright")
-plot.xts(data_for_analysis[,c(21:40)],legend.loc = "topright")
-plot.xts(data_for_analysis[,c(1:10)],legend.loc = "topright", main = 'Daily return for selected coins')
-#save figure
-dev.copy(png,sprintf("%1$s_plot_10coins.png", type))
-dev.off()
-
+# plot.xts(data_for_analysis[,c(11:20)],legend.loc = "topright")
+# plot.xts(data_for_analysis[,c(21:40)],legend.loc = "topright")
+# plot.xts(data_for_analysis[,c(1:10)],legend.loc = "topright", main = 'Daily return for selected coins')
 
 #mean and sd
 for (i in 1:length(names(data_for_analysis))){
   print(c(names(data_for_analysis)[i], round(mean(data_for_analysis[,i]), digits = 3), round(sd(data_for_analysis[,i]), digits = 3)))
 }
+mean(data_for_analysis)
 
 #descriptive statistics
 basicStats(data_for_analysis[,1])
 descriptive = basicStats(data_for_analysis)
+descriptive
 
-#export descriptive statistics 
-stargazer(descriptive,
-          type="html",
-          report="vc*",
-          summary = FALSE,
-          out=sprintf("%1$s_descriptive.html", type))
+#needed later
+mean_return = as.data.frame(t(descriptive['Mean',])) 
+positive_return = cbind(rownames(mean_return),mean_return) %>%
+  filter(Mean>=0)
+positive_return
 
 #define best lag
 VARselect(data_for_analysis, lag.max = 4, type = "both")
@@ -171,13 +145,8 @@ dim(data_VAR)
 ####################################################################################
 
 # Perform the estimation
-start = Sys.time()
 VAR_lasso <- big_var_est(data_VAR)
 VAR_lasso
-
-end = Sys.time()
-time_lasso = end-start
-time_lasso
 
 # Coefficient matrix at end of evaluation period
 VAR_lasso@betaPred
@@ -189,20 +158,16 @@ VAR_lasso@resids
 # Lagged Values at end of evaluation period 
 VAR_lasso@Zvals
 
-#plot labmda and save image
+#plot labmda 
 plot(VAR_lasso)
 SparsityPlot.BigVAR.results(VAR_lasso)
-dev.copy(png,sprintf("%1$s_sparsity.png", type))
-dev.off()
 
 spillovers_lasso <- spilloverDY12(VAR_lasso, n.ahead = n.ahead, no.corr = F)
 spillovers_lasso
 
-#check if all are the same
+# total connectedness of network
 total_connectendess = sum(to(spillovers_lasso)[[1]])
 total_connectendess
-sum(from(spillovers_lasso)[[1]])
-overall(spillovers_lasso)[[1]]
 
 to = unlist(to(spillovers_lasso))
 from = unlist(from(spillovers_lasso))
@@ -215,17 +180,28 @@ to_from_net
 #save to later analyze in gephi
 write_csv(to_from_net, sprintf("%1$s_to_from_net_lasso.csv", type))
 
+########################################################
+#most connected coins (90 percentile of to connectedness)
+most_connected = to_from_net %>% 
+  filter(to_from_net$to >= quantile(to_from_net$to, 0.9)) %>%
+  arrange(desc(to)) 
+most_connected
+
+# plot return of most connected
+plot.xts(data_for_analysis[,most_connected$Label],legend.loc = "topright")
+
+#most connected coins (10 percentile of net connectedness)
+less_connected = to_from_net %>% 
+  filter(to_from_net$from <= quantile(to_from_net$from, 0.1)) %>%
+  arrange(from) 
+less_connected
+
+# plot return of most connected
+plot.xts(data_for_analysis[,less_connected$Label],legend.loc = "topright")
 
 spillovers_table_lasso <- spillovers_to_dataframe(spillovers_lasso)
-#View(spillovers_table_lasso)
-
-#export to html
-stargazer(spillovers_table_lasso,
-          digits = 2,
-          type="html",
-          summary = FALSE,
-          out=sprintf("%1$s_spillovers_table_lasso.html", type))
-
+spillovers_table_lasso
+#save to csv
 write_csv(spillovers_table_lasso, sprintf("%1$s_spillovers_table_lasso.csv", type))
 
 ####################################
@@ -249,7 +225,7 @@ time_lasso
 #save object on disk
 save(sp_lasso_rolling_window, file = sprintf("%1$s_sp_lasso_rolling_window.RData", type))
 
-#plot and save image
+#plot
 plotOverall(sp_lasso_rolling_window)
 
 # or better plot 
@@ -270,40 +246,16 @@ plot_dynamic_connectedness <- autoplot.zoo(dynamic_connectedness) +
   ggtitle(sprintf("Total Connectedness %1$s", type))
 
 plot_dynamic_connectedness
-# and save
-ggsave(sprintf("%1$s_dynamic_connectedness.png", type), plot_dynamic_connectedness)
 
 write.csv(data.frame(dynamic_connectedness), sprintf("%1$s_dynamic_total_connectedness.csv", type))
 
+########################################################
+#plots for most connected
+plotFrom(sp_lasso_rolling_window, which = most_connected$Label)
+plotTo(sp_lasso_rolling_window, which = most_connected$Label)
+plotNet(sp_lasso_rolling_window,which = most_connected$Label)
 
-#plot rolling window
-plotFrom(sp_lasso_rolling_window, which = c(1:22))
-dev.copy(png,sprintf("%1$s_rw_from.png", type))
-dev.off()
-
-# if more coins
-plotFrom(sp_lasso_rolling_window, which = c(21:40))
-dev.copy(png,sprintf("%1$s_rw_from_part2.png", type))
-dev.off()
-
-#plot rolling window
-plotTo(sp_lasso_rolling_window, which = c(1:22))
-dev.copy(png,sprintf("%1$s_rw_to.png", type))
-dev.off()
-# if more coins
-plotTo(sp_lasso_rolling_window, which = c(21:40))
-dev.copy(png,sprintf("%1$s_rw_to_part2.png", type))
-dev.off()
-
-plotNet(sp_lasso_rolling_window,which = 1:22)
-dev.copy(png,sprintf("%1$s_rw_net.png", type))
-dev.off()
-# if more coins
-plotNet(sp_lasso_rolling_window,which = c(21:40))
-dev.copy(png,sprintf("%1$s_rw_net_part2.png", type))
-dev.off()
-
-coins_for_graphs = c('BTC', 'ETH', 'BCH', 'IOT', 'XMR', 'XRP')
+coins_for_graphs = most_connected$Label
 
 # to dynamic
 to_dynamic = to(sp_lasso_rolling_window)[[1]][c(break_point:total_points)]
@@ -316,9 +268,6 @@ plot_to_dynamic = autoplot.zoo(to_dynamic[,coins_for_graphs], facets = NULL) +
   scale_x_datetime(breaks = date_breaks("2 week"), labels = date_format("%b %d"))+
   ggtitle(sprintf("To others connectedness %1$s", type))
 plot_to_dynamic
-ggsave(sprintf("%1$s_dynamic_to.png", type), plot_to_dynamic)
-
-
 
 # from dynamic
 from_dynamic = from(sp_lasso_rolling_window)[[1]][c(break_point:total_points)]
@@ -331,7 +280,6 @@ plot_from_dynamic = autoplot.zoo(from_dynamic[,coins_for_graphs], facets = NULL)
   scale_x_datetime(breaks = date_breaks("2 week"), labels = date_format("%b %d"))+
   ggtitle(sprintf("From others connectedness %1$s", type))
 plot_from_dynamic
-ggsave(sprintf("%1$s_dynamic_from.png", type), plot_from_dynamic)
 
 # net dynamic
 net_dynamic = net(sp_lasso_rolling_window)[[1]][c(break_point:total_points)]
@@ -344,11 +292,112 @@ plot_net_dynamic = autoplot.zoo(net_dynamic[,coins_for_graphs], facets = NULL) +
   scale_x_datetime(breaks = date_breaks("2 week"), labels = date_format("%b %d"))+
   ggtitle(sprintf("Net connectedness %1$s", type))
 plot_net_dynamic
-ggsave(sprintf("%1$s_dynamic_net.png", type), plot_net_dynamic)
 
-#plotPairwise(rolling_windows_spillovers)
-end_analysis_return = Sys.time()
-time_analysis_return = end_analysis_return - start_analysis_return
-time_analysis_return
 
-print(total_connectendess)
+#plots for less connected
+plotFrom(sp_lasso_rolling_window, which = less_connected$Label)
+plotTo(sp_lasso_rolling_window, which = less_connected$Label)
+plotNet(sp_lasso_rolling_window,which = less_connected$Label)
+
+coins_for_graphs = less_connected$Label
+
+# to dynamic
+to_dynamic = to(sp_lasso_rolling_window)[[1]][c(break_point:total_points)]
+plot_to_dynamic = autoplot.zoo(to_dynamic[,coins_for_graphs], facets = NULL) +
+  #geom_line()+
+  labs(x='Time', y='To others connectedness')+
+  theme_minimal()+
+  # ylim(0, 4)+
+  # scale_x_date(breaks = date_breaks("months"),labels = time_format("%b"))
+  scale_x_datetime(breaks = date_breaks("2 week"), labels = date_format("%b %d"))+
+  ggtitle(sprintf("To others connectedness %1$s", type))
+plot_to_dynamic
+
+# from dynamic
+from_dynamic = from(sp_lasso_rolling_window)[[1]][c(break_point:total_points)]
+plot_from_dynamic = autoplot.zoo(from_dynamic[,coins_for_graphs], facets = NULL) +
+  #geom_line()+
+  labs(x='Time', y='From others connectedness')+
+  theme_minimal()+
+  # ylim(0, 4)+
+  # scale_x_date(breaks = date_breaks("months"),labels = time_format("%b"))
+  scale_x_datetime(breaks = date_breaks("2 week"), labels = date_format("%b %d"))+
+  ggtitle(sprintf("From others connectedness %1$s", type))
+plot_from_dynamic
+
+# net dynamic
+net_dynamic = net(sp_lasso_rolling_window)[[1]][c(break_point:total_points)]
+plot_net_dynamic = autoplot.zoo(net_dynamic[,coins_for_graphs], facets = NULL) +
+  #geom_line()+
+  labs(x='Time', y='Net connectedness')+
+  theme_minimal()+
+  # ylim(0, 4)+
+  # scale_x_date(breaks = date_breaks("months"),labels = time_format("%b"))
+  scale_x_datetime(breaks = date_breaks("2 week"), labels = date_format("%b %d"))+
+  ggtitle(sprintf("Net connectedness %1$s", type))
+plot_net_dynamic
+
+########################################################
+# analysis of particular coin (for example, Ripple)
+########################################################
+coin = 'XRP'
+coin_data = to_from_net %>%
+  arrange(desc(to))
+
+#positoin of coin in a list of most connected
+which(coin_data$Label == coin)
+#out of
+dim(coin_data)[1]
+
+# pairwise connectedness
+#from others with this coin
+t(spillovers_table_lasso[coin,])
+
+#to others
+data.frame(cbind(row.names(spillovers_table_lasso),spillovers_table_lasso[,coin]))
+
+# dynamic connectedness
+# to dynamic
+
+plot_to_dynamic = autoplot.zoo(to_dynamic[,coin], facets = NULL) +
+  #geom_line()+
+  labs(x='Time', y='To others connectedness')+
+  theme_minimal()+
+  # ylim(0, 4)+
+  # scale_x_date(breaks = date_breaks("months"),labels = time_format("%b"))
+  scale_x_datetime(breaks = date_breaks("2 week"), labels = date_format("%b %d"))+
+  ggtitle(sprintf("To others connectedness %1$s", type))
+plot_to_dynamic
+
+# from dynamic
+
+plot_from_dynamic = autoplot.zoo(from_dynamic[,coin], facets = NULL) +
+  #geom_line()+
+  labs(x='Time', y='From others connectedness')+
+  theme_minimal()+
+  # ylim(0, 4)+
+  # scale_x_date(breaks = date_breaks("months"),labels = time_format("%b"))
+  scale_x_datetime(breaks = date_breaks("2 week"), labels = date_format("%b %d"))+
+  ggtitle(sprintf("From others connectedness %1$s", type))
+plot_from_dynamic
+
+# net dynamic
+plot_net_dynamic = autoplot.zoo(net_dynamic[,coin], facets = NULL) +
+  #geom_line()+
+  labs(x='Time', y='Net connectedness')+
+  theme_minimal()+
+  # ylim(0, 4)+
+  # scale_x_date(breaks = date_breaks("months"),labels = time_format("%b"))
+  scale_x_datetime(breaks = date_breaks("2 week"), labels = date_format("%b %d"))+
+  ggtitle(sprintf("Net connectedness %1$s", type))
+plot_net_dynamic
+
+
+# coins with positive return during period and small 'from' connectedness (20 percentile)
+less_connected_20p = to_from_net %>% 
+  filter(to_from_net$from <= quantile(to_from_net$from, 0.2)) %>%
+  arrange(from) 
+less_connected_20p
+less_connected_20p$Label %in% as.character(positive_return[,1])
+less_connected_20p[less_connected_20p$Label %in% as.character(positive_return[,1]),]
+
